@@ -1,0 +1,49 @@
+[project]
+name = "tunebench"
+version = "0.1.0"
+description = "Fine-Tune Playground — CLI for comparing full fine-tuning, LoRA, and layer freezing"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "transformers",
+    "peft",
+    "datasets",
+    "torch",
+    "accelerate",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+    "pyright",
+]
+
+[project.scripts]
+tunebench = "tunebench.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tunebench"]
+
+[tool.uv]
+# dev deps: pytest, ruff, pyright (see dependency-groups)
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.pyright]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
