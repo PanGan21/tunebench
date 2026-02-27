@@ -61,13 +61,15 @@ make all      # format, lint, check, test
 
 ## Usage
 
-Full fine-tuning (Week 1):
+Full fine-tuning:
 
 ```bash
 tunebench train --model distilgpt2 --dataset data/sample_instructions.json --method full --epochs 3
 ```
 
 Use `tinyllama` or `mistral` for other models. A sample instruction dataset is in `data/sample_instructions.json` (JSON with `instruction` and `output` keys). With ≥10 examples, 20% is used for validation and perplexity is logged; otherwise only training loss is logged.
+
+See **[docs/](docs/)** for a full command reference and an explanation of what to expect in the training logs.
 
 ## Layout
 
