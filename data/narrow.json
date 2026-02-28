@@ -1,0 +1,4 @@
+[
+  {"instruction": "Define the term gradient.", "output": "A gradient is the vector of partial derivatives of a function."},
+  {"instruction": "What is backpropagation?", "output": "Backpropagation is the algorithm for computing gradients in neural networks."}
+]

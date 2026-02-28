@@ -14,6 +14,13 @@ def test_no_subcommand_exits():
             main()
 
 
+def test_weight_diff_requires_finetuned_path():
+    argv = ["tunebench", "weight-diff", "--model", "distilgpt2", "--finetuned", "/nonexistent"]
+    with patch.object(sys, "argv", argv):
+        with pytest.raises(FileNotFoundError, match="Checkpoint not found"):
+            main()
+
+
 def test_train_unknown_dataset_raises_file_not_found():
     with patch.object(
         sys,

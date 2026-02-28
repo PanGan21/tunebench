@@ -1,0 +1,4 @@
+[
+  {"instruction": "What is the capital of France?", "output": "Paris."},
+  {"instruction": "Name a primary color.", "output": "Red, blue, or yellow."}
+]

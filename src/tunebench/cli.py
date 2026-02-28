@@ -1,11 +1,14 @@
-"""CLI entry: tunebench train --model ... --dataset ... --method full|lora|freeze --epochs ..."""
+"""CLI entry: tunebench train / weight-diff / forgetting-test."""
 
 import argparse
 from pathlib import Path
 
+from transformers import AutoModelForCausalLM
+
 from tunebench.dataset import load_instruction_dataset, prepare_dataset
-from tunebench.model_loader import load_model_and_tokenizer
-from tunebench.trainer import run_train
+from tunebench.model_loader import get_model_id, load_model_and_tokenizer
+from tunebench.trainer import evaluate_loss, run_train
+from tunebench.weight_diff import compute_weight_drift, format_drift_table
 
 
 def _train(args: argparse.Namespace) -> None:
@@ -45,6 +48,81 @@ def _train(args: argparse.Namespace) -> None:
         freeze_embeddings_layer=args.freeze_embeddings,
         freeze_first_n=args.freeze_first_n_layers,
     )
+
+
+def _weight_diff(args: argparse.Namespace) -> None:
+    """Compare original vs fine-tuned weights per layer."""
+    from peft import PeftModel
+
+    model_id = get_model_id(args.model)
+    finetuned_path = Path(args.finetuned)
+    if not finetuned_path.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {finetuned_path}")
+
+    original_model = AutoModelForCausalLM.from_pretrained(model_id)
+    finetuned_model = AutoModelForCausalLM.from_pretrained(str(finetuned_path))
+    if (finetuned_path / "adapter_config.json").exists():
+        finetuned_model = PeftModel.from_pretrained(finetuned_model, str(finetuned_path))
+
+    drift = compute_weight_drift(original_model, finetuned_model)
+    print("Weight drift ||W_original - W_finetuned|| (Frobenius norm sum per layer):")
+    print(format_drift_table(drift))
+
+
+def _forgetting_test(args: argparse.Namespace) -> None:
+    """Eval base on generic prompts, fine-tune on narrow data, re-eval; report degradation."""
+    train_path = Path(args.train_dataset)
+    eval_path = Path(args.eval_dataset)
+    if not train_path.exists():
+        raise FileNotFoundError(f"Train dataset not found: {train_path}")
+    if not eval_path.exists():
+        raise FileNotFoundError(f"Eval dataset not found: {eval_path}")
+
+    eval_data = prepare_dataset(load_instruction_dataset(eval_path))
+    train_data = load_instruction_dataset(train_path)
+    train_data = prepare_dataset(train_data)
+
+    model, tokenizer = load_model_and_tokenizer(args.model)
+    max_len = args.max_length
+    batch = args.batch_size
+
+    print("Evaluating base model on generic prompts...")
+    loss_before = evaluate_loss(model, tokenizer, eval_data, max_length=max_len, batch_size=batch)
+    ppl_before = __import__("math").exp(min(loss_before, 100))
+
+    print(f"  eval_loss={loss_before:.4f}  eval_perplexity={ppl_before:.4f}")
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    run_train(
+        model,
+        tokenizer,
+        train_data,
+        eval_dataset=None,
+        output_dir=output_dir,
+        num_epochs=args.epochs,
+        per_device_train_batch_size=batch,
+        per_device_eval_batch_size=batch,
+        learning_rate=args.learning_rate,
+        max_length=max_len,
+        logging_steps=args.logging_steps,
+    )
+
+    checkpoints = sorted(output_dir.glob("checkpoint-*"), key=lambda p: int(p.name.split("-")[1]))
+    if not checkpoints:
+        raise FileNotFoundError(f"No checkpoint found under {output_dir}")
+    ft_model = AutoModelForCausalLM.from_pretrained(str(checkpoints[-1]))
+
+    print("Evaluating fine-tuned model on same generic prompts...")
+    loss_after = evaluate_loss(ft_model, tokenizer, eval_data, max_length=max_len, batch_size=batch)
+    ppl_after = __import__("math").exp(min(loss_after, 100))
+    print(f"  eval_loss={loss_after:.4f}  eval_perplexity={ppl_after:.4f}")
+
+    degradation = loss_after - loss_before
+    print("\nCatastrophic forgetting (higher loss = more forgetting):")
+    print(f"  loss_degradation={degradation:+.4f}")
+    print(f"  (before {loss_before:.4f} -> after {loss_after:.4f})")
+    print(f"  perplexity: {ppl_before:.4f} -> {ppl_after:.4f}")
 
 
 def main() -> None:
@@ -102,7 +180,35 @@ def main() -> None:
         help="Freeze first N transformer layers (default: 0). Use with --method freeze or full.",
     )
 
+    # weight-diff
+    wd_parser = subparsers.add_parser(
+        "weight-diff", help="Compare original vs fine-tuned weights per layer"
+    )
+    wd_parser.add_argument("--model", required=True, help="Base model (e.g. distilgpt2) or HF ID")
+    wd_parser.add_argument("--finetuned", required=True, help="Path to fine-tuned checkpoint dir")
+
+    # forgetting-test
+    ft_parser = subparsers.add_parser(
+        "forgetting-test",
+        help="Eval base on generic prompts, fine-tune, re-eval; report degradation",
+    )
+    ft_parser.add_argument("--model", required=True, help="Model name or HF ID")
+    ft_parser.add_argument("--train-dataset", required=True, help="Narrow-domain train JSON")
+    ft_parser.add_argument(
+        "--eval-dataset", required=True, help="Generic eval JSON (instruction+output)"
+    )
+    ft_parser.add_argument("--output-dir", default="runs/forgetting-test", help="Checkpoint dir")
+    ft_parser.add_argument("--epochs", type=int, default=3)
+    ft_parser.add_argument("--batch-size", type=int, default=2)
+    ft_parser.add_argument("--learning-rate", type=float, default=5e-5)
+    ft_parser.add_argument("--max-length", type=int, default=512)
+    ft_parser.add_argument("--logging-steps", type=int, default=1)
+
     args = parser.parse_args()
 
     if args.command == "train":
         _train(args)
+    elif args.command == "weight-diff":
+        _weight_diff(args)
+    elif args.command == "forgetting-test":
+        _forgetting_test(args)

@@ -1,0 +1,4 @@
+[
+  {"instruction": "What is 2+2?", "output": "4."},
+  {"instruction": "Say hello.", "output": "Hello!"}
+]

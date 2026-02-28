@@ -1,5 +1,6 @@
 """Training loop and Trainer integration (full / freeze / LoRA)."""
 
+import tempfile
 from pathlib import Path
 
 from transformers import (
@@ -70,6 +71,32 @@ class ParamCountLoggingCallback(TrainerCallback):
         return control
 
 
+class MemoryAndTimeCallback(TrainerCallback):
+    """Log peak GPU memory (if CUDA) and time per epoch at end of training."""
+
+    def on_train_end(self, args, state, control, **kwargs):
+        if state.log_history:
+            last = state.log_history[-1]
+            total_time = last.get("train_runtime")
+            epoch = last.get("epoch")
+            if total_time is not None and epoch is not None and epoch > 0:
+                try:
+                    t, e = float(total_time), float(epoch)
+                    print(f"[tunebench] time_per_epoch_sec={t / e:.2f}")
+                except (TypeError, ValueError):
+                    pass
+        # Peak GPU memory (CUDA only)
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                peak_mb = torch.cuda.max_memory_allocated() / (1024**2)
+                print(f"[tunebench] gpu_peak_memory_mb={peak_mb:.2f}")
+        except Exception:
+            pass
+        return control
+
+
 def run_train(
     model,
     tokenizer,
@@ -132,8 +159,46 @@ def run_train(
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
-        callbacks=[PerplexityLoggingCallback(), ParamCountLoggingCallback()],
+        callbacks=[
+            PerplexityLoggingCallback(),
+            ParamCountLoggingCallback(),
+            MemoryAndTimeCallback(),
+        ],
     )
 
     trainer.train()
     return trainer
+
+
+def evaluate_loss(
+    model,
+    tokenizer,
+    dataset,
+    *,
+    max_length: int = 512,
+    batch_size: int = 4,
+) -> float:
+    """Compute average cross-entropy loss (and thus perplexity) on a dataset.
+
+    Dataset must have a 'text' column (e.g. from prepare_dataset).
+    Returns the mean loss over the dataset.
+    """
+    from transformers import DataCollatorForLanguageModeling, Trainer, TrainingArguments
+
+    _ensure_pad_token(tokenizer)
+    tokenized = tokenize_dataset(dataset, tokenizer, max_length=max_length)
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        args = TrainingArguments(
+            output_dir=tmpdir,
+            per_device_eval_batch_size=batch_size,
+            report_to="none",
+        )
+        trainer = Trainer(
+            model=model,
+            args=args,
+            eval_dataset=tokenized,
+            data_collator=data_collator,
+        )
+        metrics = trainer.evaluate()
+    return float(metrics["eval_loss"])
