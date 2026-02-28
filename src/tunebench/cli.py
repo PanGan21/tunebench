@@ -9,11 +9,6 @@ from tunebench.trainer import run_train
 
 
 def _train(args: argparse.Namespace) -> None:
-    if args.method != "full":
-        raise NotImplementedError(
-            f"Only --method full is implemented for now. Got: {args.method}. "
-            "LoRA and freeze will be added in a later phase."
-        )
     dataset_path = Path(args.dataset)
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset not found: {dataset_path}")
@@ -32,6 +27,8 @@ def _train(args: argparse.Namespace) -> None:
 
     model, tokenizer = load_model_and_tokenizer(args.model)
 
+    lora_rank = args.lora_rank if args.method == "lora" else None
+
     run_train(
         model,
         tokenizer,
@@ -44,6 +41,9 @@ def _train(args: argparse.Namespace) -> None:
         learning_rate=args.learning_rate,
         max_length=args.max_length,
         logging_steps=args.logging_steps,
+        lora_rank=lora_rank,
+        freeze_embeddings_layer=args.freeze_embeddings,
+        freeze_first_n=args.freeze_first_n_layers,
     )
 
 
@@ -82,6 +82,24 @@ def main() -> None:
     )
     train_parser.add_argument(
         "--logging-steps", type=int, default=1, help="Log every N steps (default: 1)"
+    )
+    train_parser.add_argument(
+        "--lora-rank",
+        type=int,
+        default=8,
+        help="LoRA rank when --method lora (default: 8). Ignored for full/freeze.",
+    )
+    train_parser.add_argument(
+        "--freeze-embeddings",
+        action="store_true",
+        help="Freeze embedding layers (saves memory, often sufficient for instruction tuning).",
+    )
+    train_parser.add_argument(
+        "--freeze-first-n-layers",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Freeze first N transformer layers (default: 0). Use with --method freeze or full.",
     )
 
     args = parser.parse_args()

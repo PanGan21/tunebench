@@ -67,13 +67,13 @@ Full fine-tuning:
 tunebench train --model distilgpt2 --dataset data/sample_instructions.json --method full --epochs 3
 ```
 
-Use `tinyllama` or `mistral` for other models. A sample instruction dataset is in `data/sample_instructions.json` (JSON with `instruction` and `output` keys). With ≥10 examples, 20% is used for validation and perplexity is logged; otherwise only training loss is logged.
+Use `tinyllama` or `mistral` for other models. You can run **LoRA** (`--method lora`, with `--lora-rank`) or **freeze** embeddings/layers (`--freeze-embeddings`, `--freeze-first-n-layers`) to reduce trainable parameters and memory. A sample instruction dataset is in `data/sample_instructions.json` (JSON with `instruction` and `output` keys). With ≥10 examples, 20% is used for validation and perplexity is logged; otherwise only training loss is logged.
 
 See **[docs/](docs/)** for a full command reference and an explanation of what to expect in the training logs.
 
 ## Layout
 
-- **`src/tunebench/`** — the package (dataset, model_loader, trainer, metrics, cli). Code only; no data or run artifacts.
+- **`src/tunebench/`** — the package (dataset, model_loader, trainer, metrics, lora_utils, freeze_utils, cli). Code only; no data or run artifacts.
 - **`data/`** — custom datasets (e.g. instruction JSON for fine-tuning).
 - **`logs/`** — training logs (loss, metrics, etc.).
 - **`runs/`** — checkpoints and run outputs.

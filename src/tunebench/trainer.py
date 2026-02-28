@@ -9,6 +9,8 @@ from transformers import (
     TrainingArguments,
 )
 
+from tunebench.freeze_utils import freeze_embeddings, freeze_first_n_layers
+from tunebench.lora_utils import apply_lora, count_parameters
 from tunebench.metrics import loss_to_perplexity
 
 
@@ -54,6 +56,20 @@ class PerplexityLoggingCallback(TrainerCallback):
         return control
 
 
+class ParamCountLoggingCallback(TrainerCallback):
+    """Log total params, trainable params, and trainable % at training start."""
+
+    def on_train_begin(self, args, state, control, model=None, **kwargs):
+        if model is not None:
+            trainable, total, pct = count_parameters(model)
+            print(
+                f"[tunebench] total_parameters={total:,} "
+                f"trainable_parameters={trainable:,} "
+                f"trainable_pct={pct:.2f}%"
+            )
+        return control
+
+
 def run_train(
     model,
     tokenizer,
@@ -67,13 +83,25 @@ def run_train(
     learning_rate: float = 5e-5,
     max_length: int = 512,
     logging_steps: int = 1,
+    lora_rank: int | None = None,
+    freeze_embeddings_layer: bool = False,
+    freeze_first_n: int = 0,
 ):
-    """Run full fine-tuning with the Hugging Face Trainer.
+    """Run fine-tuning with the Hugging Face Trainer.
 
-    Logs training loss, validation loss, and perplexity (exp(loss)).
+    Supports full fine-tuning, LoRA (when lora_rank is set), and optional
+    freezing of embeddings and/or first N layers. Logs training loss,
+    validation loss, perplexity, and parameter counts.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    if lora_rank is not None:
+        model = apply_lora(model, r=lora_rank)
+    if freeze_embeddings_layer:
+        freeze_embeddings(model)
+    if freeze_first_n > 0:
+        freeze_first_n_layers(model, freeze_first_n)
 
     train_dataset = tokenize_dataset(train_dataset, tokenizer, max_length=max_length)
     if eval_dataset is not None:
@@ -104,7 +132,7 @@ def run_train(
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
         data_collator=data_collator,
-        callbacks=[PerplexityLoggingCallback()],
+        callbacks=[PerplexityLoggingCallback(), ParamCountLoggingCallback()],
     )
 
     trainer.train()
