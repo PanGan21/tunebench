@@ -1,6 +1,6 @@
-"""Tests for tunebench.model_loader (no real model loading)."""
+"""Tests for tunebench.models.loader (no real model loading)."""
 
-from tunebench.model_loader import MODEL_IDS, get_model_id
+from models import MODEL_IDS, get_model_id
 
 
 def test_get_model_id_tinyllama():

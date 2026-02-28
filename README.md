@@ -67,7 +67,7 @@ Full fine-tuning:
 tunebench train --model distilgpt2 --dataset data/sample_instructions.json --method full --epochs 3
 ```
 
-Use `tinyllama` or `mistral` for other models. You can run **LoRA** (`--method lora`, with `--lora-rank`) or **freeze** embeddings/layers (`--freeze-embeddings`, `--freeze-first-n-layers`) to reduce trainable parameters and memory. A sample instruction dataset is in `data/sample_instructions.json` (JSON with `instruction` and `output` keys). With ≥10 examples, 20% is used for validation and perplexity is logged; otherwise only training loss is logged.
+Use `tinyllama` or `mistral` for other models. You can run **LoRA** (`--method lora`, with `--lora-rank`) or **freeze** embeddings/layers (`--freeze-embeddings`, `--freeze-first-n-layers`) to reduce trainable parameters and memory. A sample instruction dataset is in `data/demo.json` (JSON with `instruction` and `output` keys). With ≥10 examples, 20% is used for validation and perplexity is logged; otherwise only training loss is logged.
 
 - **`tunebench weight-diff --model <name> --finetuned <checkpoint_dir>`** — Compare original vs fine-tuned weights per layer (‖W_orig − W_ft‖).
 - **`tunebench forgetting-test --model <name> --train-dataset <narrow.json> --eval-dataset <generic.json>`** — Catastrophic forgetting check: eval base → fine-tune → re-eval; report degradation.
@@ -134,7 +134,18 @@ Check the logged **trainable_pct** — it should be well under 1%. Then run `wei
 
 ## Layout
 
-- **`src/tunebench/`** — the package (dataset, model_loader, trainer, metrics, lora_utils, freeze_utils, weight_diff, cli). Code only; no data or run artifacts.
+All code lives under **`src/`**; packages are siblings at the same level:
+
+- **`src/tunebench/`** — CLI entry point and shared utils:
+  - **`cli.py`** — commands: train, weight-diff, forgetting-test.
+  - **`utils.py`** — shared helpers (layer naming, pad token, parameter counts).
+- **`src/data/`** — dataset loading, instruction formatting, tokenization.
+- **`src/models/`** — model loader, LoRA, layer freezing.
+- **`src/training/`** — Trainer integration, callbacks, evaluation.
+- **`src/analysis/`** — metrics (perplexity), weight drift, formatting.
+
+Project-level folders (at repo root):
+
 - **`data/`** — custom datasets (e.g. instruction JSON for fine-tuning).
 - **`logs/`** — training logs (loss, metrics, etc.).
 - **`runs/`** — checkpoints and run outputs.

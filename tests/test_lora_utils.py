@@ -1,8 +1,9 @@
-"""Tests for tunebench.lora_utils."""
+"""Tests for tunebench.models.lora."""
 
 import torch
 
-from tunebench.lora_utils import apply_lora, count_parameters
+from models import apply_lora
+from tunebench.utils import count_parameters
 
 
 def test_count_parameters_simple_module():

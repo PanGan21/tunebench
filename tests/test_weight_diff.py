@@ -1,27 +1,27 @@
-"""Tests for tunebench.weight_diff."""
+"""Tests for tunebench.analysis.weight_diff."""
 
 import torch
 
-from tunebench.weight_diff import (
-    _layer_key,
+from analysis.weight_diff import (
     compute_weight_drift_per_layer,
     format_drift_table,
     get_state_dict_for_diff,
 )
+from tunebench.utils import get_layer_key
 
 
 def test_layer_key_transformer_blocks():
-    assert _layer_key("transformer.h.0.attn.c_attn.weight") == "layer_0"
-    assert _layer_key("model.layers.2.self_attn.q_proj.weight") == "layer_2"
+    assert get_layer_key("transformer.h.0.attn.c_attn.weight") == "layer_0"
+    assert get_layer_key("model.layers.2.self_attn.q_proj.weight") == "layer_2"
 
 
 def test_layer_key_embeddings():
-    assert _layer_key("transformer.wte.weight") == "embeddings"
-    assert _layer_key("model.embed_tokens.weight") == "embeddings"
+    assert get_layer_key("transformer.wte.weight") == "embeddings"
+    assert get_layer_key("model.embed_tokens.weight") == "embeddings"
 
 
 def test_layer_key_other():
-    assert _layer_key("transformer.ln_f.weight") == "other"
+    assert get_layer_key("transformer.ln_f.weight") == "other"
 
 
 def test_compute_weight_drift_identical_is_zero():

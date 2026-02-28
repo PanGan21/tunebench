@@ -1,6 +1,6 @@
 """Layer freezing: embeddings and first N transformer layers."""
 
-import re
+from tunebench.utils import get_layer_index
 
 
 def freeze_embeddings(model) -> None:
@@ -11,10 +11,8 @@ def freeze_embeddings(model) -> None:
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        # GPT-2 / DistilGPT-2
         if "wte" in name or "wpe" in name:
             param.requires_grad = False
-        # LLaMA / Mistral / TinyLlama
         if "embed_tokens" in name or "embed_positions" in name:
             param.requires_grad = False
 
@@ -27,13 +25,9 @@ def freeze_first_n_layers(model, n: int) -> None:
     """
     if n <= 0:
         return
-    # Match .h.0. or .layers.0. etc. to get layer index
-    layer_pattern = re.compile(r"\.(?:h|layers)\.(\d+)\.")
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        m = layer_pattern.search(name)
-        if m is not None:
-            layer_idx = int(m.group(1))
-            if layer_idx < n:
-                param.requires_grad = False
+        layer_idx = get_layer_index(name)
+        if layer_idx is not None and layer_idx < n:
+            param.requires_grad = False

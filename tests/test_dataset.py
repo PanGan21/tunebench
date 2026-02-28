@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from tunebench.dataset import (
+from data import (
     INSTRUCTION_TEMPLATE,
     format_instruction_example,
     load_instruction_dataset,

@@ -10,42 +10,11 @@ from transformers import (
     TrainingArguments,
 )
 
-from tunebench.freeze_utils import freeze_embeddings, freeze_first_n_layers
-from tunebench.lora_utils import apply_lora, count_parameters
-from tunebench.metrics import loss_to_perplexity
-
-
-def _ensure_pad_token(tokenizer):
-    if tokenizer.pad_token is not None:
-        return
-    tokenizer.pad_token = tokenizer.eos_token
-
-
-def tokenize_dataset(dataset, tokenizer, max_length: int = 512):
-    """Tokenize 'text' column and add labels for causal LM (padding positions = -100)."""
-    _ensure_pad_token(tokenizer)
-    pad_id = tokenizer.pad_token_id
-
-    def tokenize_fn(examples):
-        out = tokenizer(
-            examples["text"],
-            truncation=True,
-            max_length=max_length,
-            padding="max_length",
-            return_tensors=None,
-        )
-        # Labels: same as input_ids, -100 at padding (so loss is not computed there)
-        labels = []
-        for ids in out["input_ids"]:
-            labels.append([x if x != pad_id else -100 for x in ids])
-        out["labels"] = labels
-        return out
-
-    return dataset.map(
-        tokenize_fn,
-        batched=True,
-        remove_columns=dataset.column_names,
-    )
+from analysis.metrics import loss_to_perplexity
+from data.dataset import tokenize_dataset
+from models.freeze import freeze_embeddings, freeze_first_n_layers
+from models.lora import apply_lora
+from tunebench.utils import count_parameters
 
 
 class PerplexityLoggingCallback(TrainerCallback):
@@ -85,7 +54,6 @@ class MemoryAndTimeCallback(TrainerCallback):
                     print(f"[tunebench] time_per_epoch_sec={t / e:.2f}")
                 except (TypeError, ValueError):
                     pass
-        # Peak GPU memory (CUDA only)
         try:
             import torch
 
@@ -117,8 +85,7 @@ def run_train(
     """Run fine-tuning with the Hugging Face Trainer.
 
     Supports full fine-tuning, LoRA (when lora_rank is set), and optional
-    freezing of embeddings and/or first N layers. Logs training loss,
-    validation loss, perplexity, and parameter counts.
+    freezing of embeddings and/or first N layers.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -181,11 +148,9 @@ def evaluate_loss(
     """Compute average cross-entropy loss (and thus perplexity) on a dataset.
 
     Dataset must have a 'text' column (e.g. from prepare_dataset).
-    Returns the mean loss over the dataset.
     """
     from transformers import DataCollatorForLanguageModeling, Trainer, TrainingArguments
 
-    _ensure_pad_token(tokenizer)
     tokenized = tokenize_dataset(dataset, tokenizer, max_length=max_length)
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
     with tempfile.TemporaryDirectory() as tmpdir:

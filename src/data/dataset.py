@@ -1,8 +1,10 @@
-"""Dataset loading and instruction-format conversion for fine-tuning."""
+"""Dataset loading, instruction formatting, and tokenization."""
 
 from pathlib import Path
 
 from datasets import Dataset, load_dataset
+
+from tunebench.utils import ensure_pad_token
 
 INSTRUCTION_TEMPLATE = "### Instruction:\n{instruction}\n\n### Response:\n{output}"
 
@@ -36,4 +38,30 @@ def prepare_dataset(data: Dataset) -> Dataset:
     return data.map(
         format_instruction_example,
         remove_columns=["instruction", "output"],
+    )
+
+
+def tokenize_dataset(dataset: Dataset, tokenizer, max_length: int = 512) -> Dataset:
+    """Tokenize 'text' column and add labels for causal LM (padding positions = -100)."""
+    ensure_pad_token(tokenizer)
+    pad_id = tokenizer.pad_token_id
+
+    def tokenize_fn(examples):
+        out = tokenizer(
+            examples["text"],
+            truncation=True,
+            max_length=max_length,
+            padding="max_length",
+            return_tensors=None,
+        )
+        labels = []
+        for ids in out["input_ids"]:
+            labels.append([x if x != pad_id else -100 for x in ids])
+        out["labels"] = labels
+        return out
+
+    return dataset.map(
+        tokenize_fn,
+        batched=True,
+        remove_columns=dataset.column_names,
     )

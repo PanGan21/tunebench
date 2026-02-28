@@ -1,7 +1,7 @@
-"""Tests for tunebench.freeze_utils."""
+"""Tests for tunebench.models.freeze."""
 
-from tunebench.freeze_utils import freeze_embeddings, freeze_first_n_layers
-from tunebench.lora_utils import count_parameters
+from models import freeze_embeddings, freeze_first_n_layers
+from tunebench.utils import count_parameters
 
 
 def test_freeze_embeddings_reduces_trainable():

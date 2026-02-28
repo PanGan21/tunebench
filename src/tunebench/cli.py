@@ -5,10 +5,10 @@ from pathlib import Path
 
 from transformers import AutoModelForCausalLM
 
-from tunebench.dataset import load_instruction_dataset, prepare_dataset
-from tunebench.model_loader import get_model_id, load_model_and_tokenizer
-from tunebench.trainer import evaluate_loss, run_train
-from tunebench.weight_diff import compute_weight_drift, format_drift_table
+from analysis import compute_weight_drift, format_drift_table, loss_to_perplexity
+from data import load_instruction_dataset, prepare_dataset
+from models import get_model_id, load_model_and_tokenizer
+from training import evaluate_loss, run_train
 
 
 def _train(args: argparse.Namespace) -> None:
@@ -88,8 +88,7 @@ def _forgetting_test(args: argparse.Namespace) -> None:
 
     print("Evaluating base model on generic prompts...")
     loss_before = evaluate_loss(model, tokenizer, eval_data, max_length=max_len, batch_size=batch)
-    ppl_before = __import__("math").exp(min(loss_before, 100))
-
+    ppl_before = loss_to_perplexity(loss_before)
     print(f"  eval_loss={loss_before:.4f}  eval_perplexity={ppl_before:.4f}")
 
     output_dir = Path(args.output_dir)
@@ -115,7 +114,7 @@ def _forgetting_test(args: argparse.Namespace) -> None:
 
     print("Evaluating fine-tuned model on same generic prompts...")
     loss_after = evaluate_loss(ft_model, tokenizer, eval_data, max_length=max_len, batch_size=batch)
-    ppl_after = __import__("math").exp(min(loss_after, 100))
+    ppl_after = loss_to_perplexity(loss_after)
     print(f"  eval_loss={loss_after:.4f}  eval_perplexity={ppl_after:.4f}")
 
     degradation = loss_after - loss_before

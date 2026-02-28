@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from tunebench.metrics import loss_to_perplexity
+from analysis import loss_to_perplexity
 
 
 def test_loss_to_perplexity_zero():
