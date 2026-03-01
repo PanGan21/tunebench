@@ -39,3 +39,13 @@ def count_parameters(model) -> tuple[int, int, float]:
     total = sum(p.numel() for p in model.parameters())
     pct = (100.0 * trainable / total) if total else 0.0
     return trainable, total, pct
+
+
+def get_num_transformer_layers(model) -> int:
+    """Return the number of transformer blocks (e.g. .h.* or .layers.*) from param names."""
+    max_idx = -1
+    for name in model.state_dict():
+        idx = get_layer_index(name)
+        if idx is not None and idx > max_idx:
+            max_idx = idx
+    return max_idx + 1 if max_idx >= 0 else 0

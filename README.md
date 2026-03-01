@@ -71,12 +71,16 @@ Use `tinyllama` or `mistral` for other models. You can run **LoRA** (`--method l
 
 - **`tunebench weight-diff --model <name> --finetuned <checkpoint_dir>`** — Compare original vs fine-tuned weights per layer (‖W_orig − W_ft‖).
 - **`tunebench forgetting-test --model <name> --train-dataset <narrow.json> --eval-dataset <generic.json>`** — Catastrophic forgetting check: eval base → fine-tune → re-eval; report degradation.
+- **`tunebench rank-sweep`** / **`tunebench lr-sweep`** — Sweep LoRA ranks or learning rates; results in `results.json`.
+- **`tunebench head-importance --model <name>`** — Per-layer, per-head attention importance (weight norm).
+- **`tunebench train ... --track-gradient-norm`** — Log gradient L2 norm each step.
+- **`tunebench train ... --layer-wise-lr-decay 0.9`** — Layer-wise learning rate decay (earlier layers get smaller LR).
 
-See **[docs/](docs/)** for a full command reference, training logs, and [weight analysis and forgetting](docs/weight-analysis-and-forgetting.md).
+When **CUDA is available**, models load on GPU with bfloat16/float16 by default. See **[docs/](docs/)** for the full command reference and [advanced features](docs/advanced.md).
 
 ## Example: full flow
 
-End-to-end demo: train a small model, inspect weight drift, then (optionally) run a forgetting check. A small `data/demo.json` is included so you can run the commands below as-is.
+End-to-end demo using the included `data/demo.json`, `data/generic.json`, and `data/narrow.json`. You can run the commands below as-is.
 
 **1. Full fine-tune and save a checkpoint**
 
@@ -103,8 +107,6 @@ tunebench weight-diff \
 
 **3. (Optional) Catastrophic forgetting check**
 
-Use two files: one **generic** (eval) and one **narrow** (train). E.g. `data/generic.json` with a few general QA pairs and `data/narrow.json` with domain-specific pairs. Then:
-
 ```bash
 tunebench forgetting-test \
   --model distilgpt2 \
@@ -129,6 +131,56 @@ tunebench train \
 ```
 
 Check the logged **trainable_pct** — it should be well under 1%. Then run `weight-diff` on the LoRA checkpoint; base weights drift ~0 because only adapters were trained.
+
+**5. (Optional) Attention head importance**
+
+See which attention heads have the largest weight norms per layer (before or after fine-tuning):
+
+```bash
+tunebench head-importance --model distilgpt2
+```
+
+**6. (Optional) LoRA rank sweep**
+
+Train with several LoRA ranks (e.g. 2, 4, 8) and compare eval loss and trainable params; results go to `runs/demo-rank-sweep/results.json`:
+
+```bash
+tunebench rank-sweep \
+  --model distilgpt2 \
+  --dataset data/demo.json \
+  --ranks 2 4 8 \
+  --output-dir runs/demo-rank-sweep \
+  --epochs 2
+```
+
+**7. (Optional) Learning rate sweep**
+
+Compare a few learning rates; results in `runs/demo-lr-sweep/results.json`:
+
+```bash
+tunebench lr-sweep \
+  --model distilgpt2 \
+  --dataset data/demo.json \
+  --learning-rates 1e-5 5e-5 1e-4 \
+  --output-dir runs/demo-lr-sweep \
+  --epochs 2
+```
+
+**8. (Optional) Train with gradient norm and layer-wise LR decay**
+
+Log gradient L2 norm each step and use smaller learning rates for earlier layers:
+
+```bash
+tunebench train \
+  --model distilgpt2 \
+  --dataset data/demo.json \
+  --epochs 2 \
+  --output-dir runs/demo-advanced \
+  --track-gradient-norm \
+  --layer-wise-lr-decay 0.9
+```
+
+Check the logs for **grad_norm**; with layer-wise decay, earlier layers update more slowly.
 
 ---
 

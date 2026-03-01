@@ -5,10 +5,16 @@ from pathlib import Path
 
 from transformers import AutoModelForCausalLM
 
-from analysis import compute_weight_drift, format_drift_table, loss_to_perplexity
+from analysis import (
+    compute_head_importance,
+    compute_weight_drift,
+    format_drift_table,
+    format_head_importance_table,
+    loss_to_perplexity,
+)
 from data import load_instruction_dataset, prepare_dataset
 from models import get_model_id, load_model_and_tokenizer
-from training import evaluate_loss, run_train
+from training import evaluate_loss, run_lr_sweep, run_rank_sweep, run_train
 
 
 def _train(args: argparse.Namespace) -> None:
@@ -47,6 +53,8 @@ def _train(args: argparse.Namespace) -> None:
         lora_rank=lora_rank,
         freeze_embeddings_layer=args.freeze_embeddings,
         freeze_first_n=args.freeze_first_n_layers,
+        track_gradient_norm=getattr(args, "track_gradient_norm", False),
+        layer_wise_lr_decay=getattr(args, "layer_wise_lr_decay", None),
     )
 
 
@@ -124,6 +132,66 @@ def _forgetting_test(args: argparse.Namespace) -> None:
     print(f"  perplexity: {ppl_before:.4f} -> {ppl_after:.4f}")
 
 
+def _rank_sweep(args: argparse.Namespace) -> None:
+    """Run LoRA rank sweep and print summary."""
+    path = Path(args.dataset)
+    if not path.exists():
+        raise FileNotFoundError(f"Dataset not found: {path}")
+    results = run_rank_sweep(
+        args.model,
+        path,
+        ranks=args.ranks,
+        output_base_dir=args.output_dir,
+        num_epochs=args.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.learning_rate,
+        max_length=args.max_length,
+    )
+    print("Rank sweep results:")
+    for r in results:
+        print(f"  rank={r['rank']} trainable={r.get('trainable_parameters', 'N/A')} ", end="")
+        if "eval_loss" in r:
+            print(
+                f"eval_loss={r['eval_loss']:.4f} eval_ppl={r.get('eval_perplexity', 0):.4f}", end=""
+            )
+        print(f" runtime_sec={r.get('train_runtime_sec', 'N/A')}")
+    print(f"Full results: {Path(args.output_dir) / 'results.json'}")
+
+
+def _lr_sweep(args: argparse.Namespace) -> None:
+    """Run learning rate sweep and print summary."""
+    path = Path(args.dataset)
+    if not path.exists():
+        raise FileNotFoundError(f"Dataset not found: {path}")
+    results = run_lr_sweep(
+        args.model,
+        path,
+        learning_rates=args.learning_rates,
+        output_base_dir=args.output_dir,
+        num_epochs=args.epochs,
+        batch_size=args.batch_size,
+        max_length=args.max_length,
+    )
+    print("LR sweep results:")
+    for r in results:
+        lr = r["learning_rate"]
+        print(f"  lr={lr:.0e} ", end="")
+        if "eval_loss" in r:
+            print(
+                f"eval_loss={r['eval_loss']:.4f} eval_ppl={r.get('eval_perplexity', 0):.4f}", end=""
+            )
+        print(f" runtime_sec={r.get('train_runtime_sec', 'N/A')}")
+    print(f"Full results: {Path(args.output_dir) / 'results.json'}")
+
+
+def _head_importance(args: argparse.Namespace) -> None:
+    """Compute and print attention head importance table."""
+    model, _ = load_model_and_tokenizer(args.model)
+    importance = compute_head_importance(model)
+    print("Attention head importance (weight L2 norm per head):")
+    print(format_head_importance_table(importance, max_heads=args.max_heads))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="tunebench", description="Fine-tune playground for LLMs")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -178,6 +246,18 @@ def main() -> None:
         metavar="N",
         help="Freeze first N transformer layers (default: 0). Use with --method freeze or full.",
     )
+    train_parser.add_argument(
+        "--track-gradient-norm",
+        action="store_true",
+        help="Log gradient L2 norm each step (useful for debugging training dynamics).",
+    )
+    train_parser.add_argument(
+        "--layer-wise-lr-decay",
+        type=float,
+        default=None,
+        metavar="DECAY",
+        help="Layer-wise LR decay (e.g. 0.9): earlier layers get smaller LR.",
+    )
 
     # weight-diff
     wd_parser = subparsers.add_parser(
@@ -203,6 +283,58 @@ def main() -> None:
     ft_parser.add_argument("--max-length", type=int, default=512)
     ft_parser.add_argument("--logging-steps", type=int, default=1)
 
+    # rank-sweep
+    rs_parser = subparsers.add_parser(
+        "rank-sweep",
+        help="Train with multiple LoRA ranks (2–64), save metrics to results.json",
+    )
+    rs_parser.add_argument("--model", required=True, help="Model name or HF ID")
+    rs_parser.add_argument("--dataset", required=True, help="Path to instruction JSON")
+    rs_parser.add_argument(
+        "--ranks",
+        type=int,
+        nargs="+",
+        default=[2, 4, 8, 16, 32, 64],
+        help="LoRA ranks to try (default: 2 4 8 16 32 64)",
+    )
+    rs_parser.add_argument("--output-dir", default="runs/rank-sweep")
+    rs_parser.add_argument("--epochs", type=int, default=2)
+    rs_parser.add_argument("--batch-size", type=int, default=2)
+    rs_parser.add_argument("--learning-rate", type=float, default=5e-5)
+    rs_parser.add_argument("--max-length", type=int, default=512)
+
+    # lr-sweep
+    lr_parser = subparsers.add_parser(
+        "lr-sweep",
+        help="Train with multiple learning rates, save metrics to results.json",
+    )
+    lr_parser.add_argument("--model", required=True, help="Model name or HF ID")
+    lr_parser.add_argument("--dataset", required=True, help="Path to instruction JSON")
+    lr_parser.add_argument(
+        "--learning-rates",
+        type=float,
+        nargs="+",
+        default=[1e-5, 3e-5, 5e-5, 1e-4],
+        help="Learning rates to try (default: 1e-5 3e-5 5e-5 1e-4)",
+    )
+    lr_parser.add_argument("--output-dir", default="runs/lr-sweep")
+    lr_parser.add_argument("--epochs", type=int, default=2)
+    lr_parser.add_argument("--batch-size", type=int, default=2)
+    lr_parser.add_argument("--max-length", type=int, default=512)
+
+    # head-importance
+    hi_parser = subparsers.add_parser(
+        "head-importance",
+        help="Compute attention head importance (weight norm) per layer",
+    )
+    hi_parser.add_argument("--model", required=True, help="Model name or HF ID")
+    hi_parser.add_argument(
+        "--max-heads",
+        type=int,
+        default=12,
+        help="Max heads to show per layer (default: 12)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "train":
@@ -211,3 +343,9 @@ def main() -> None:
         _weight_diff(args)
     elif args.command == "forgetting-test":
         _forgetting_test(args)
+    elif args.command == "rank-sweep":
+        _rank_sweep(args)
+    elif args.command == "lr-sweep":
+        _lr_sweep(args)
+    elif args.command == "head-importance":
+        _head_importance(args)

@@ -14,7 +14,11 @@ from analysis.metrics import loss_to_perplexity
 from data.dataset import tokenize_dataset
 from models.freeze import freeze_embeddings, freeze_first_n_layers
 from models.lora import apply_lora
+from training.layerwise_lr import get_layerwise_param_groups
 from tunebench.utils import count_parameters
+
+# High max_grad_norm so we don't clip but Trainer still computes and logs grad_norm
+TRACK_GRAD_NORM_CLIP = 1e7
 
 
 class PerplexityLoggingCallback(TrainerCallback):
@@ -38,6 +42,29 @@ class ParamCountLoggingCallback(TrainerCallback):
                 f"trainable_pct={pct:.2f}%"
             )
         return control
+
+
+class TunebenchTrainer(Trainer):
+    """Trainer that supports layer-wise LR decay via custom optimizer."""
+
+    def __init__(self, *args, layer_wise_lr_decay: float | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._layer_wise_lr_decay = layer_wise_lr_decay
+
+    def create_optimizer(self):
+        if self._layer_wise_lr_decay is not None and self.optimizer is None:
+            import torch.optim as optim
+
+            opt_model = self.model_wrapped if hasattr(self, "model_wrapped") else self.model
+            param_groups = get_layerwise_param_groups(
+                opt_model,
+                base_lr=self.args.learning_rate,
+                decay=self._layer_wise_lr_decay,
+                weight_decay=self.args.weight_decay,
+            )
+            self.optimizer = optim.AdamW(param_groups)
+            return self.optimizer
+        return super().create_optimizer()
 
 
 class MemoryAndTimeCallback(TrainerCallback):
@@ -81,11 +108,13 @@ def run_train(
     lora_rank: int | None = None,
     freeze_embeddings_layer: bool = False,
     freeze_first_n: int = 0,
+    track_gradient_norm: bool = False,
+    layer_wise_lr_decay: float | None = None,
 ):
     """Run fine-tuning with the Hugging Face Trainer.
 
-    Supports full fine-tuning, LoRA (when lora_rank is set), and optional
-    freezing of embeddings and/or first N layers.
+    Supports full fine-tuning, LoRA, freezing, gradient norm logging,
+    and layer-wise LR decay.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -106,33 +135,40 @@ def run_train(
         mlm=False,
     )
 
-    training_args = TrainingArguments(
-        output_dir=str(output_dir),
-        num_train_epochs=num_epochs,
-        per_device_train_batch_size=per_device_train_batch_size,
-        per_device_eval_batch_size=per_device_eval_batch_size,
-        learning_rate=learning_rate,
-        logging_steps=logging_steps,
-        eval_strategy="epoch" if eval_dataset is not None else "no",
-        save_strategy="epoch",
-        save_total_limit=1,
-        load_best_model_at_end=eval_dataset is not None,
-        report_to="none",
-    )
+    training_kwargs: dict = {
+        "output_dir": str(output_dir),
+        "num_train_epochs": num_epochs,
+        "per_device_train_batch_size": per_device_train_batch_size,
+        "per_device_eval_batch_size": per_device_eval_batch_size,
+        "learning_rate": learning_rate,
+        "logging_steps": logging_steps,
+        "eval_strategy": "epoch" if eval_dataset is not None else "no",
+        "save_strategy": "epoch",
+        "save_total_limit": 1,
+        "load_best_model_at_end": eval_dataset is not None,
+        "report_to": "none",
+    }
+    if track_gradient_norm:
+        training_kwargs["max_grad_norm"] = TRACK_GRAD_NORM_CLIP
+    training_args = TrainingArguments(**training_kwargs)
 
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        data_collator=data_collator,
-        callbacks=[
+    trainer_cls = TunebenchTrainer if layer_wise_lr_decay is not None else Trainer
+    trainer_kwargs: dict = {
+        "model": model,
+        "args": training_args,
+        "train_dataset": train_dataset,
+        "eval_dataset": eval_dataset,
+        "data_collator": data_collator,
+        "callbacks": [
             PerplexityLoggingCallback(),
             ParamCountLoggingCallback(),
             MemoryAndTimeCallback(),
         ],
-    )
+    }
+    if layer_wise_lr_decay is not None:
+        trainer_kwargs["layer_wise_lr_decay"] = layer_wise_lr_decay
 
+    trainer = trainer_cls(**trainer_kwargs)
     trainer.train()
     return trainer
 

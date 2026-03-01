@@ -11,9 +11,15 @@ pytest_plugins = []
 
 
 def pytest_configure(config):
+    # PEFT Conv1D fan_in_fan_out warning; behavior is correct
     config.addinivalue_line(
         "filterwarnings",
         "ignore::UserWarning:peft.tuners.lora.layer",
+    )
+    # MPS (Apple Silicon): pin_memory not supported; DataLoader warns
+    config.addinivalue_line(
+        "filterwarnings",
+        "ignore::UserWarning:torch.utils.data.dataloader",
     )
 
 
