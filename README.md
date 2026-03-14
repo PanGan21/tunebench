@@ -201,3 +201,7 @@ Project-level folders (at repo root):
 - **`data/`** — custom datasets (e.g. instruction JSON for fine-tuning).
 - **`logs/`** — training logs (loss, metrics, etc.).
 - **`runs/`** — checkpoints and run outputs.
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
